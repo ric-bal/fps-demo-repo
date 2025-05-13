@@ -1510,7 +1510,7 @@ MonoBehaviour:
   horizontalAirHopSpeed: 25
   jumpSustainGravity: 0.48
   gravity: -90
-  hoverGravity: 0.025
+  hoverGravity: 0.01
   _hoverTimer: 2
   _currentHoverTimer: 1
   slideStartSpeed: 50
@@ -1523,6 +1523,10 @@ MonoBehaviour:
   slideHeightResponse: 20
   standCameraTargetHeight: 0.45
   slideCameraTargetHeight: 0.05
+  slamSpeed: -200
+  dashSpeed: 125
+  _dashTimer: 0.15
+  _currentDashTimer: 1
 --- !u!114 &965212344
 MonoBehaviour:
   m_ObjectHideFlags: 0

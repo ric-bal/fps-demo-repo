@@ -45,7 +45,9 @@ public class Player : MonoBehaviour
             Move        = input.Move.ReadValue<Vector2>(),
             Jump        = input.Jump.WasPressedThisFrame(),
             JumpSustain = input.Jump.IsPressed(),
-            SlamSlide   = input.SlamSlide.IsPressed()
+            SlamSlide   = input.SlamSlide.IsPressed(),
+            Dash        = input.Dash.WasPressedThisFrame(),
+            Boost       = input.Boost.WasPressedThisFrame()
         };
         playerCharacter.UpdateInput(characterInput);
         playerCharacter.UpdateBody(deltaTime);

@@ -9,11 +9,13 @@ public struct CharacterInput
     public bool Jump;
     public bool JumpSustain;
     public bool SlamSlide;
+    public bool Dash;
+    public bool Boost;
 }
 
 public enum Stance
 {
-    Stand, Slam, Slide
+    Stand, Slide
 }
 
 public struct CharacterState
@@ -51,7 +53,7 @@ public class PlayerCharacter : MonoBehaviour, ICharacterController
 
     [SerializeField] private float hoverGravity = 0.05f;
     [SerializeField] private float _hoverTimer = 2f;
-    [SerializeField] private float _currentHoverTimer = 1f;
+    [SerializeField] private float _currentHoverTimer = 2f;
 
     [Space]
 
@@ -73,6 +75,16 @@ public class PlayerCharacter : MonoBehaviour, ICharacterController
 
     [Space]
 
+    [SerializeField] private float slamSpeed = -200f;
+
+    [Space]
+
+    [SerializeField] private float dashSpeed = 125f;
+    [SerializeField] private float _dashTimer = 0.15f;
+    [SerializeField] private float _currentDashTimer = 0.15f;
+
+    [Space]
+
     private CharacterState _state;
     private CharacterState _lastState;
     private CharacterState _tempState;
@@ -82,11 +94,15 @@ public class PlayerCharacter : MonoBehaviour, ICharacterController
     private bool _requestedJump;
     private bool _requestedSustainedJump;
     private bool _requestedSlamSlide;
+    private bool _requestedDash;
+    private bool _requestedBoost;
 
     private float _currentVelocityMag = 0f;
 
     private bool _lockSlide = false;
     private bool _cancelSlide = false;
+    private bool _ungroundedWhileSliding = false;
+    private bool _forcedUngroundedWhileSliding = false;
 
     private Collider[] _unslideOverlapResults;
 
@@ -126,6 +142,9 @@ public class PlayerCharacter : MonoBehaviour, ICharacterController
         {
             _requestedSlamSlide = input.SlamSlide;
         }
+
+        _requestedDash = _requestedDash || input.Dash;
+        _requestedBoost = _requestedBoost || input.Boost;
     }
 
 
@@ -171,11 +190,74 @@ public class PlayerCharacter : MonoBehaviour, ICharacterController
 
     public void UpdateVelocity(ref Vector3 currentVelocity, float deltaTime)
     {
-        var currentPlanarVelocity = Vector3.ProjectOnPlane
+        // requested movement on XZ plane
+        var planarMovement = Vector3.ProjectOnPlane
         (
-            vector: currentVelocity,
+            vector: _requestedMovement,
             planeNormal: motor.CharacterUp
-        );
+        ) * _requestedMovement.magnitude;
+
+
+        // movement irrelevant of grounding status
+        {
+            if (_requestedDash)
+            {
+                _currentDashTimer = 0f;
+                //currentVelocity += 50f * currentPlanarVelocity.normalized;
+            }
+
+            if (_currentDashTimer < _dashTimer)
+            {
+                _currentDashTimer += deltaTime;
+
+                var currentPlanarVelocity = Vector3.ProjectOnPlane
+                (
+                    vector: currentVelocity,
+                    planeNormal: motor.CharacterUp
+                );
+
+                // cancel dash to allow for jumps (to gain mid air dash jumps, remove if(_requestedJump))
+                if (_requestedJump)
+                {
+                    // cancel dash
+                    _currentDashTimer = _dashTimer;
+
+                    // dash jumps only when grounded, if not grounded return to walkspeed
+                    if (!_forcedUngroundedWhileSliding)
+                    {
+                        currentVelocity = currentPlanarVelocity.normalized * walkSpeed;
+                    }
+                }
+                else
+                {
+                    if (_requestedDash)
+                    {
+                        _requestedDash = false;
+
+                        _forcedUngroundedWhileSliding = motor.GroundingStatus.IsStableOnGround;
+                        motor.ForceUnground(time: 0.1f);
+
+                        if (planarMovement != Vector3.zero)
+                        {
+                            currentVelocity = dashSpeed * planarMovement;
+                        }
+                        else
+                        {
+                            currentVelocity = dashSpeed * motor.CharacterForward;
+                        }
+                    }
+                    if (_currentDashTimer > _dashTimer)
+                    {
+                        currentVelocity = currentPlanarVelocity.normalized * walkSpeed;
+                    }
+                }
+            }
+        }
+
+        if (_requestedBoost)
+        {
+            _requestedBoost = false;
+        }
 
         // on the ground
         if (motor.GroundingStatus.IsStableOnGround)
@@ -220,7 +302,7 @@ public class PlayerCharacter : MonoBehaviour, ICharacterController
             }
 
             // movement
-            if (_state.Stance is Stance.Stand or Stance.Slam)
+            if (_state.Stance is Stance.Stand)
             {
                 var targetVelocity = groundedMovement * walkSpeed;
 
@@ -285,30 +367,25 @@ public class PlayerCharacter : MonoBehaviour, ICharacterController
         {
             // in-air movement
 
-            // MANAGE SLIDING HERE
-
-            // if (_requestedSlamSlide || _state.Stance is Stance.Slam)
-            // {
-            //     _state.Stance = Stance.Slam;
-            //     _requestedSlamSlide = false;
-
-            //     if (motor.GroundingStatus.IsStableOnGround)
-            //     {
-            //         _state.Stance = Stance.Stand;
-            //     }
-            // }
+            // requested slam/slide in air means player wants to slam, but not if ungrounded while sliding
+            if (_requestedSlamSlide && !_ungroundedWhileSliding)
+            {
+                _requestedSlamSlide = false;
+                currentVelocity = Vector3.zero;
+                currentVelocity += slamSpeed * motor.CharacterUp;
+            }
 
             if (_requestedMovement.sqrMagnitude > 0f)
             {
-                // requested movement on XZ plane
-                var planarMovement = Vector3.ProjectOnPlane
-                (
-                    vector: _requestedMovement,
-                    planeNormal: motor.CharacterUp
-                ) * _requestedMovement.magnitude;
-
                 // movement force
                 var movementForce = airAcceleration * deltaTime * planarMovement;
+
+                // current velocity in XZ plane
+                var currentPlanarVelocity = Vector3.ProjectOnPlane
+                (
+                    vector: currentVelocity,
+                    planeNormal: motor.CharacterUp
+                );
 
                 // if moving slower than max air speed, treat movement force as a steering force
                 if (currentPlanarVelocity.magnitude < airSpeed)
@@ -358,6 +435,7 @@ public class PlayerCharacter : MonoBehaviour, ICharacterController
             // gravity
             var effectiveGravity = gravity;
             var verticalSpeed = Vector3.Dot(currentVelocity, motor.CharacterUp); 
+
             if (_requestedSustainedJump)
             {
                 _currentHoverTimer += deltaTime;
@@ -370,7 +448,7 @@ public class PlayerCharacter : MonoBehaviour, ICharacterController
                     effectiveGravity *= jumpSustainGravity;
                 }
                 // hovering
-                else if (_currentHoverTimer < _hoverTimer)
+                else if (_currentHoverTimer < _hoverTimer) //&& _currentDashTimer >= _dashTimer)
                 {
                     effectiveGravity *= hoverGravity;
                 }
@@ -385,8 +463,6 @@ public class PlayerCharacter : MonoBehaviour, ICharacterController
                 }
             }
             currentVelocity += deltaTime * effectiveGravity * motor.CharacterUp;
-
-
         }
  
         // press jump
@@ -394,13 +470,22 @@ public class PlayerCharacter : MonoBehaviour, ICharacterController
         {
             _requestedJump = false;
             _requestedSlamSlide = false; 
+            _ungroundedWhileSliding = false; // also reset on grounding update
 
             motor.ForceUnground(time: 0.1f);
 
-            var requestedAirVelocity = motor.GetDirectionTangentToSurface // value 0 to 1
+            // requested velocity on XZ plane
+            var requestedAirVelocity = motor.GetDirectionTangentToSurface
             (
                 direction: _requestedMovement,
                 surfaceNormal: motor.CharacterUp
+            );
+
+            // current velocity in XZ plane
+            var currentPlanarVelocity = Vector3.ProjectOnPlane
+            (
+                vector: currentVelocity,
+                planeNormal: motor.CharacterUp
             );
 
             var currentVerticalSpeed = Vector3.Dot(currentVelocity, motor.CharacterUp); // calculates relative upward speed
@@ -425,6 +510,11 @@ public class PlayerCharacter : MonoBehaviour, ICharacterController
 
         _currentVelocityMag = currentVelocity.magnitude;
     }
+
+    // void Update()
+    // {
+    //     Debug.Log(_requestedRotation);
+    // }
 
 
     public void BeforeCharacterUpdate(float deltaTime)
@@ -452,11 +542,23 @@ public class PlayerCharacter : MonoBehaviour, ICharacterController
 
     public void PostGroundingUpdate(float deltaTime)
     {
-        if (!motor.GroundingStatus.IsStableOnGround)
+        // now on ground
+        if (motor.GroundingStatus.IsStableOnGround)
         {
-            if (_state.Stance is Stance.Slide && !_requestedSlamSlide)
+
+            _ungroundedWhileSliding = false; // also reset on jump
+        }
+        // now in air
+        else
+        {
+            if (_state.Stance is Stance.Slide)
             {
-                _state.Stance = Stance.Stand;
+                _ungroundedWhileSliding = true;
+
+                if (!_requestedSlamSlide)
+                {
+                    _state.Stance = Stance.Stand;
+                }
             }
         }
     }
